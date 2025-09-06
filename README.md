@@ -86,3 +86,15 @@ It’s designed to be safe, unobtrusive, and compatible with dynamic UIs (SPAs, 
 2. Inside it, add:
 
 [**`manifest.json`**](/manifest.json)
+
+### Notes & trade-offs
+
+* Dedup listeners: normalizes by (type, listener, capture). (Browsers already ignore exact dupes; this makes it robust when different option objects were used.)
+
+* rAF/timers: You can tweak RAF_CAP_FPS, MIN_INTERVAL_MS, etc. Pauses rAF when the tab is hidden to save CPU/GPU.
+
+* Data URL → Blob URL: Improves memory/network behavior within the tab session. Blob URLs don’t persist across reloads. True cross-page caching would need a Service Worker (not feasible in a userscript).
+
+* Downscale images: Only downscales when natural size is much larger than displayed size. Produces webp/jpeg blob URLs. Adjust SCALE_THRESHOLD, MAX_DIMENSION, JPEG_QUALITY.
+
+* Blocking trackers: OFF by default. Flip BLOCK_TRACKERS: true to enable. Blocking can break login/AB tests/consent banners—use selectively.
