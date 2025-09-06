@@ -18,7 +18,15 @@
    * Feature toggles
    **********************/
   const FEAT = {
-    // existing features assumed already present in your base script...
+    LAZY_MEDIA: true,
+    PASSIVE_LISTENERS: true,
+    OFFSCREEN_VISIBILITY: true,
+    VIDEO_OFFSCREEN_PAUSE: true,
+    ANIM_THROTTLE_OFFSCREEN: true,
+    PREFERS_REDUCED_MOTION: true,
+    PRECONNECT_TOP_DOMAINS: true,
+    CSS_SAFE_DEFAULTS: true,
+    LISTENER_CLEANUP: true,             // NEW: track & auto-remove listeners on detached nodes
     DEDUP_EVENT_LISTENERS: true,
     THROTTLE_RAF_AND_TIMERS: true,
     DATA_URL_TO_BLOB_URL: true,
@@ -26,11 +34,309 @@
     BLOCK_TRACKERS: false, // ⚠️ off by default; can break sites
   };
 
+  const DEBUG = false;
+  const log = (...a) => DEBUG && console.log('[UFO]', ...a);
+
+  /**********************
+   * CSS: Safe defaults
+   **********************/
+  if (FEAT.CSS_SAFE_DEFAULTS) {
+    GM_addStyle(`
+      @media (prefers-reduced-motion: reduce) {
+        * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+      }
+      pre, code { text-rendering: optimizeSpeed; }
+      img { image-rendering: auto; }
+      .ufo-contain { contain: content; }
+      .ufo-content-visibility { content-visibility: auto; contain-intrinsic-size: 1px 500px; }
+      pre.lora-top-compact {
+        display: block;
+        margin: 6px 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        max-width: 100%;
+        max-height: 60vh;
+        overflow: auto;
+        line-height: 1.25;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+      }
+    `);
+  }
+
+  /**********************
+   * Listener registry (auto-cleanup)
+   **********************/
+  let registry;
+  if (FEAT.LISTENER_CLEANUP) {
+    // Store listeners per element; keep only minimal info needed to remove precisely.
+    const STORE = new WeakMap(); // Element -> Set<Rec>
+    const PASSIVE_TYPES = new Set(['scroll', 'wheel', 'touchstart', 'touchmove', 'touchend', 'touchcancel']);
+
+    const origAdd = EventTarget.prototype.addEventListener;
+    const origRem = EventTarget.prototype.removeEventListener;
+
+    const normaliseOptions = (type, options) => {
+      // Convert options to a consistent object, applying passive by default for scroll/touch/wheel
+      const isPassiveType = PASSIVE_TYPES.has(type);
+      if (options == null || typeof options === 'boolean') {
+        return {
+          capture: !!options,
+          passive: isPassiveType ? true : undefined,
+          once: false,
+          signal: undefined,
+          raw: options
+        };
+      }
+      // object
+      return {
+        capture: !!options.capture,
+        passive: isPassiveType ? (options.passive !== false) : options.passive,
+        once: !!options.once,
+        signal: options.signal,
+        raw: options
+      };
+    };
+
+    const addRecord = (target, rec) => {
+      if (!(target instanceof Node)) return; // Only clean up for DOM nodes; skip Window/Document
+      let set = STORE.get(target);
+      if (!set) { set = new Set(); STORE.set(target, set); }
+      set.add(rec);
+    };
+
+    const deleteRecord = (target, type, listener, capture) => {
+      const set = STORE.get(target);
+      if (!set) return;
+      for (const rec of set) {
+        if (rec.type === type && rec.listener === listener && rec.capture === capture) {
+          set.delete(rec);
+        }
+      }
+      if (!set.size) STORE.delete(target);
+    };
+
+    // Hook addEventListener/removeEventListener
+    EventTarget.prototype.addEventListener = function(type, listener, options) {
+      const opts = normaliseOptions(type, options);
+      const finalOpts = (opts.passive === undefined && opts.capture === false && opts.once === false && !opts.signal)
+        ? opts.raw // pass original if unchanged to avoid surprising sites
+        : { passive: opts.passive, capture: opts.capture, once: opts.once, signal: opts.signal };
+
+      // Track it for DOM nodes (cleanup)
+      try {
+        if (this instanceof Node) {
+          addRecord(this, {
+            type,
+            listener,
+            capture: !!opts.capture
+          });
+          // Auto-de-register when AbortSignal aborts
+          if (opts.signal instanceof AbortSignal) {
+            const t = this;
+            const onAbort = () => {
+              try { origRem.call(t, type, listener, !!opts.capture); } catch {}
+              deleteRecord(t, type, listener, !!opts.capture);
+              opts.signal?.removeEventListener?.('abort', onAbort);
+            };
+            opts.signal.addEventListener('abort', onAbort, { once: true });
+          }
+        }
+      } catch {}
+
+      return origAdd.call(this, type, listener, finalOpts);
+    };
+
+    EventTarget.prototype.removeEventListener = function(type, listener, options) {
+      // Normalise to extract capture flag for matching
+      const cap = (options && typeof options === 'object') ? !!options.capture : !!options;
+      try {
+        if (this instanceof Node) deleteRecord(this, type, listener, cap);
+      } catch {}
+      return origRem.call(this, type, listener, options);
+    };
+
+    // Cleanup when nodes are detached
+    const cleanupNode = (node) => {
+      if (!(node instanceof Element)) return;
+
+      const tearDown = (el) => {
+        const set = STORE.get(el);
+        if (!set) return;
+        for (const rec of set) {
+          try { origRem.call(el, rec.type, rec.listener, rec.capture); } catch {}
+        }
+        STORE.delete(el);
+      };
+
+      tearDown(node);
+      node.querySelectorAll('*').forEach(tearDown);
+    };
+
+    const mo = new MutationObserver((muts) => {
+      for (const m of muts) {
+        if (m.type === 'childList' && m.removedNodes && m.removedNodes.length) {
+          m.removedNodes.forEach(n => cleanupNode(n));
+        }
+      }
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+
+    registry = { STORE }; // exposed for debugging if needed
+    log('Listener cleanup enabled');
+  }
+
+  /**********************
+   * Passive listeners (applies even if cleanup is off)
+   **********************/
+  if (FEAT.PASSIVE_LISTENERS && !FEAT.LISTENER_CLEANUP) {
+    const origAdd = EventTarget.prototype.addEventListener;
+    const PASSIVE_TYPES = new Set(['scroll', 'wheel', 'touchstart', 'touchmove', 'touchend', 'touchcancel']);
+    EventTarget.prototype.addEventListener = function(type, listener, options) {
+      let opts = options;
+      if (PASSIVE_TYPES.has(type)) {
+        if (typeof options === 'boolean' || options == null) {
+          opts = { capture: !!options, passive: true };
+        } else if (typeof options === 'object') {
+          opts = { passive: options.passive !== false, capture: !!options.capture, once: !!options.once, signal: options.signal };
+        }
+      }
+      return origAdd.call(this, type, listener, opts);
+    };
+  }
+
+  /**********************
+   * Lazy images/iframes + decoding + fetchpriority + size hydration
+   **********************/
+  const inViewportObserver = new IntersectionObserver(() => {}, { root: null, rootMargin: '0px', threshold: 0 });
+  const refineIO = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      const el = e.target;
+      if (e.isIntersecting && el.tagName === 'IMG' && el.getAttribute('fetchpriority') !== 'high') {
+        el.setAttribute('fetchpriority', 'high');
+        refineIO.unobserve(el);
+      }
+    });
+  }, { root: null, rootMargin: '200px', threshold: 0.01 });
+
+  function optimiseMedia(el) {
+    if (!el || el.__ufoOptimised) return;
+    const isImg = el.tagName === 'IMG';
+    const isIframe = el.tagName === 'IFRAME';
+    if (!isImg && !isIframe) return;
+
+    if (!el.hasAttribute('loading')) el.setAttribute('loading', 'lazy');
+    if (isImg) {
+      if (!el.hasAttribute('decoding')) el.setAttribute('decoding', 'async');
+      if (!el.hasAttribute('fetchpriority')) el.setAttribute('fetchpriority', 'low');
+      const hydrateSize = () => {
+        if (!el.getAttribute('width') && el.naturalWidth) el.setAttribute('width', el.naturalWidth);
+        if (!el.getAttribute('height') && el.naturalHeight) el.setAttribute('height', el.naturalHeight);
+      };
+      if (el.complete) hydrateSize(); else el.addEventListener('load', hydrateSize, { once: true });
+    } else if (isIframe) {
+      if (!el.hasAttribute('referrerpolicy')) el.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+      if (!el.hasAttribute('fetchpriority')) el.setAttribute('fetchpriority', 'low');
+    }
+    refineIO.observe(el);
+    el.__ufoOptimised = true;
+  }
+
+  if (FEAT.LAZY_MEDIA) {
+    document.querySelectorAll('img,iframe').forEach(optimiseMedia);
+    new MutationObserver((muts) => {
+      muts.forEach(m => m.addedNodes?.forEach(n => {
+        if (n.nodeType !== 1) return;
+        if (n.matches?.('img,iframe')) optimiseMedia(n);
+        n.querySelectorAll?.('img,iframe').forEach(optimiseMedia);
+      }));
+    }).observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  /**********************
+   * Offscreen content-visibility & animation throttling
+   **********************/
+  const offscreenIO = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      const el = e.target;
+      if (!e.isIntersecting) {
+        if (FEAT.ANIM_THROTTLE_OFFSCREEN) el.style.animationPlayState = 'paused';
+        if (FEAT.VIDEO_OFFSCREEN_PAUSE && el.tagName === 'VIDEO') { try { el.pause(); } catch {} }
+      } else {
+        if (FEAT.ANIM_THROTTLE_OFFSCREEN) el.style.animationPlayState = 'running';
+        if (FEAT.VIDEO_OFFSCREEN_PAUSE && el.tagName === 'VIDEO' && el.autoplay) { try { el.play(); } catch {} }
+      }
+    });
+  });
+
+  function decorateHeavyContainers(root = document) {
+    if (!FEAT.OFFSCREEN_VISIBILITY) return;
+    const biggies = root.querySelectorAll('section, article, main, aside, div[role="region"], .scroll, .container, .card, .panel');
+    biggies.forEach(el => {
+      if (el.__ufoVisApplied) return;
+      el.classList.add('ufo-content-visibility', 'ufo-contain');
+      offscreenIO.observe(el);
+      el.__ufoVisApplied = true;
+    });
+    if (FEAT.VIDEO_OFFSCREEN_PAUSE) root.querySelectorAll('video').forEach(v => offscreenIO.observe(v));
+  }
+  decorateHeavyContainers();
+  new MutationObserver((muts) => {
+    muts.forEach(m => m.addedNodes?.forEach(n => {
+      if (n.nodeType !== 1) return;
+      decorateHeavyContainers(n);
+    }));
+  }).observe(document.documentElement, { childList: true, subtree: true });
+
+  /**********************
+   * Preconnect to top external domains
+   **********************/
+  if (FEAT.PRECONNECT_TOP_DOMAINS) {
+    const isHTTP = (u) => /^https?:\/\//.test(u || '');
+    const getHost = (u) => { try { return new URL(u).origin; } catch { return null; } };
+    const urls = new Map();
+    const push = (u) => {
+      if (!isHTTP(u)) return;
+      const origin = getHost(u);
+      if (!origin || origin === location.origin) return;
+      urls.set(origin, (urls.get(origin) || 0) + 1);
+    };
+    try {
+      document.querySelectorAll('img[src],script[src],link[href],video[src],source[src],iframe[src]').forEach(el => {
+        const u = el.getAttribute('src') || el.getAttribute('href');
+        push(u);
+      });
+      [...urls.entries()].sort((a,b) => b[1]-a[1]).slice(0,5).forEach(([origin]) => {
+        if (!document.querySelector(`link[rel="preconnect"][href="${origin}"]`)) {
+          const l = document.createElement('link');
+          l.rel = 'preconnect'; l.href = origin; l.crossOrigin = '';
+          document.head.appendChild(l);
+        }
+      });
+    } catch {}
+  }
+
+  /**********************
+   * Respect user motion preference (scroll)
+   **********************/
+  if (FEAT.PREFERS_REDUCED_MOTION) {
+    try {
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        document.documentElement.style.scrollBehavior = 'auto';
+      }
+    } catch {}
+  }
+
+  // Expose registry for quick debugging in Console (optional)
+  if (FEAT.LISTENER_CLEANUP) {
+    // @ts-ignore
+    window.__ufoListenerRegistry = registry;
+  }
+
   /**********************
    * Utilities
    **********************/
-  const DEBUG = false;
-  const log = (...a) => DEBUG && console.log('[UFO+]', ...a);
   const now = () => (performance && performance.now ? performance.now() : Date.now());
 
   /****************************************************************
