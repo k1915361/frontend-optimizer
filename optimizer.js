@@ -2,7 +2,7 @@
 // @name         Universal Frontend Optimizer
 // @namespace    http://tampermonkey.net/
 // @version      2025-09-06
-// @author       You
+// @author       k1915361
 // @icon         data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==
 
 // @description  Lazy media, passive events, offscreen savings, preconnect, and auto-cleanup of event listeners on detached nodes, deduped listeners, rAF/timer throttling, data-URL offload, client-side image downscale, and optional tracker blocking.
