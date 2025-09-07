@@ -1,15 +1,33 @@
 
 {
   "manifest_version": 3,
-  "name": "universal frontend optimizer",
-  "description": "auto-optimise images/iframes, events, offscreen content, animations, and connections on any site.",
+  "name": "ufo (universal frontend optimizer)",
   "version": "1.0.0",
-  "permissions": [],
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["optimizer.js"],
-      "run_at": "document_idle"
-    }
-  ]
+  "description": "safe, universal frontend performance optimizer.",
+  "host_permissions": ["*://*/*"],
+  "content_scripts": [{
+    "matches": ["*://*/*"],
+    "run_at": "document_start",
+    "all_frames": true,
+    "match_about_blank": true,
+    "js": [
+      "page_injector.js",
+      "per_origin_config_kill_switch.js",
+      "csp_safe_style_injection.js",
+      "per_site_profiles.js",
+      "performance_orchestration.js",
+      "offscreen_and_layout_safety.js",
+      "image_and_video_handling_guardrails.js",
+      "network_hints.js",
+      "local_only_core_web_vitals_stub.js",
+      "hud.js"
+    ]
+  }],
+  "web_accessible_resources": [{
+    "resources": [
+      "events_unified.page.js",
+      "neutering.page.js"
+    ],
+    "matches": ["*://*/*"]
+  }]
 }
