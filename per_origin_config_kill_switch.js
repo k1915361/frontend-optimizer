@@ -19,11 +19,6 @@
   
   (UFO.util ??= {});
   UFO.util.injectStyle ||= function injectStyle(cssText, id) {
-    try {
-      // if GM_addStyle exists (userscript case), use it
-      // eslint-disable-next-line no-undef
-      if (typeof GM_addStyle === "function") return GM_addStyle(cssText);
-    } catch {}
     const el = document.createElement("style");
     if (id) el.id = id;
     el.textContent = cssText;
