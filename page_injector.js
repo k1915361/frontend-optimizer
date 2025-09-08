@@ -2,6 +2,10 @@
 
 // page_injector.js
 (() => {
+
+  // TODO make this into a FEAT flag.
+  if (window.top != window) return;
+
   // Snapshot FEAT from the content-script world
   const feat = (window.__ufo && window.__ufo.FEAT) ? JSON.parse(JSON.stringify(window.__ufo.FEAT)) : {};
 

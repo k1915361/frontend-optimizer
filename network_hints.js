@@ -20,7 +20,7 @@
   // Safe defaults (set only if not already provided by per-site profile/user)
   FEAT.PRECONNECT_SMART ??= true;
   FEAT.LCP_BOOST ??= true;
-  FEAT.LCP_SYNC_DECODE ??= true;
+  FEAT.LCP_SYNC_DECODE ??= false; // of by default in safe mode
 
   // ---------- Module A: Preconnect + dns-prefetch ----------
   (function installPreconnectSmart(){

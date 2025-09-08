@@ -13,7 +13,7 @@
 #${HUD_ID}{position:fixed;inset:auto auto 16px 16px;z-index:2147483647;min-width:220px;
   font:12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   background:rgba(20,20,22,.9);color:#eee;border:1px solid #333;border-radius:10px;
-  box-shadow:0 6px 18px rgba(0,0,0,.35);padding:10px;backdrop-filter:saturate(1.2) blur(4px)}
+  box-shadow:0 6px 18px rgba(0,0,0,.35);padding:10px;background:#141416E6; /* 90% opaque */ box-shadow:0 3px 10px rgba(0,0,0,.25);}
 #${HUD_ID} .hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
 #${HUD_ID} .hdr b{font-size:12px;letter-spacing:.6px;color:#ddd}
 #${HUD_ID} .fps{font-weight:600}
@@ -30,6 +30,7 @@
     try { const st = document.createElement("style"); if (id) st.id=id; st.textContent=css; document.head.appendChild(st); return { node: st }; }
     catch { return { node: null }; }
   });
+  
   inject(CSS, "ufo-hud-style");
 
   let hud, rafId, fpsEl;

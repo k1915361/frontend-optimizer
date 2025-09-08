@@ -130,32 +130,46 @@ __ufo_profileUpdate?.({ LISTENER_CLEANUP: false })       // skip detach observer
     EventTarget.prototype.removeEventListener = ORIG.remove;
   });
 
+  // Clean up listeners when nodes are removed
+  const schedule = (fn) => {
+    try {
+      // Prefer batched flush (if content script bridged it), else run now.
+      (window.__ufo_batch || ((f) => f()))(fn);
+    } catch { try { fn(); } catch {} }
+  };
+
+  const processRemoved = (records) => {
+    for (const r of records) {
+      if (!r.removedNodes) continue;
+      r.removedNodes.forEach((node) => {
+        const stack = [node];
+        while (stack.length) {
+          const n = stack.pop();
+          const byType = listeners.get(n);
+          if (byType) {
+            for (const [type, map] of byType) {
+              for (const [, e] of map) {
+                try { ORIG.remove.call(n, type, e.wrapped, { capture: !!e.options.capture }); } catch {}
+              }
+            }
+            listeners.delete(n);
+          }
+          if (n && n.childNodes && n.childNodes.length) {
+            for (let i = 0; i < n.childNodes.length; i++) stack.push(n.childNodes[i]);
+          }
+        }
+      });
+    }
+  };
+
   // Auto-cleanup on detach only if enabled
   let mo = null;
   if (FEAT.LISTENER_CLEANUP) {
-    mo = new MutationObserver((records) => {
-      for (const r of records) {
-        r.removedNodes && r.removedNodes.forEach((node) => {
-          const stack = [node];
-          while (stack.length) {
-            const n = stack.pop();
-            const byType = listeners.get(n);
-            if (byType) {
-              for (const [type, map] of byType) {
-                for (const [, e] of map) {
-                  try { ORIG.remove.call(n, type, e.wrapped, { capture: !!e.options.capture }); } catch {}
-                }
-              }
-              listeners.delete(n);
-            }
-            if (n && n.childNodes && n.childNodes.length) stack.push(...n.childNodes);
-          }
-        });
-      }
-    });
-    try { mo.observe(document, { childList: true, subtree: true }); } catch {}
+    mo = new MutationObserver((records) => schedule(() => processRemoved(records)));
+    try { mo.observe(document.body || document.documentElement, { childList: true, subtree: true }); } catch {}
     regCleanup(() => { try { mo.disconnect(); } catch {} });
   }
+  
 
   // Debug helpers
   window.__ufo_events = function (node) {

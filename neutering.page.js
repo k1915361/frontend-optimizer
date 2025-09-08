@@ -23,11 +23,11 @@
 (() => {
   const UFO = (window.__ufo ||= {}); 
   const FEAT = (UFO.FEAT ||= {});
+  FEAT.SCRIPT_NEUTER = false // safe mode default
   let installed = false;
   function installIfEnabled() {
     if (installed || !FEAT.SCRIPT_NEUTER) return;
     installed = true;
-
 
   const ORIG = {
     append: Node.prototype.appendChild,

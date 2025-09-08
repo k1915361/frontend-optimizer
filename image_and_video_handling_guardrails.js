@@ -8,7 +8,7 @@
 (() => {
   const UFO = (window.__ufo ??= {});
   const FEAT = (UFO.FEAT ??= {});
-  FEAT.DOWNSCALE_OVERSIZE_IMAGES ??= true;
+  FEAT.DOWNSCALE_OVERSIZE_IMAGES ??= false;
   FEAT.OFFSCREEN_VIDEO_PAUSE ??= true;
 
   // Heuristics for zoom/gallery regions
@@ -27,6 +27,8 @@
     if (!(img instanceof HTMLImageElement)) return false;
     if (img.closest(ZOOMY_SELECTOR)) return false;
     if (img.hasAttribute("data-no-downscale")) return false;
+    if (img?.dataset?.ufoDownscaled) return false;
+    img.dataset.ufoDownscaled = "1";
 
     // If srcset/sizes is present, let the browser pick responsive candidates
     if (img.hasAttribute("srcset")) return false;
