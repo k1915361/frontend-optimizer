@@ -1,66 +1,59 @@
 
-/*───────────────────────────────────────────────────────────────────────────────
-  REFINEMENT [2025-09-07]: Scoped content-visibility for heavy containers
-  - Opt-in class:    .ufo-auto
-  - Opt-out attr:    [data-ufo="off"]
-  - Guards:
-      • Skip elements that match current location.hash (anchor target)
-      • Skip containers that contain position: sticky descendants
-───────────────────────────────────────────────────────────────────────────────*/
+/* offscreen_and_layout_safety.js — DOM-early safe injector */
 (() => {
-  const UFO = (window.__ufo ??= {});
-  const FEAT = (UFO.FEAT ??= {});
-  if (FEAT.OFFSCREEN_SCOPE === false) return;
+  const UFO   = (window.__ufo ??= {});
+  const CLEAN = (UFO.__cleanups ??= []);
 
-  // Inject style once
-  (function inject() {
-    if (document.getElementById("ufo-auto-style")) return;
-    const css = `
-      .ufo-auto:not([data-ufo="off"]) {
-        content-visibility: auto;
-        contain: content;
-      }
-    `.trim();
-    const el = document.createElement("style");
-    el.id = "ufo-auto-style";
-    el.textContent = css;
-    document.head.appendChild(el);
-    (UFO.__cleanups ??= []).push(() => el.remove());
-  })();
+  // Skip non-HTML documents (e.g., SVG, XML, PDFs rendered as docs)
+  const ct = (document.contentType || "text/html").toLowerCase();
+  if (!ct.includes("html")) return;
 
-  // Heuristic: skip containers with sticky descendants (expensive check is bounded)
-  function hasStickyDescendant(root, max = 200) {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-    let n, count = 0;
-    while ((n = walker.nextNode()) && count++ < max) {
-      const pos = getComputedStyle(n).position;
-      if (pos === "sticky") return true;
+  // Use shared helper if present; otherwise resilient local fallback
+  const injectStyle = UFO.util?.injectStyle ?? function injectStyle(cssText, id) {
+    function appendNow() {
+      const host = document.head || document.getElementsByTagName("head")[0] || document.body || document.documentElement;
+      if (!host) return { node: null };
+      const el = document.createElement("style");
+      if (id) el.id = id;
+      el.textContent = cssText;
+      host.appendChild(el);
+      CLEAN.push(() => { try { el.remove(); } catch {} });
+      return { node: el };
     }
-    return false;
-  }
 
-  function isHashTarget(el) {
-    const h = location.hash && location.hash.slice(1);
-    return !!(h && el.id && el.id === h);
-  }
+    // Fast path
+    if (document.head || document.body) return appendNow();
 
-  // Public API: mark an element as offscreen-optimizable
-  window.__ufo_markAuto = function (el) {
-    if (!el || el.nodeType !== 1) return false;
-    if (isHashTarget(el)) return false;
-    if (hasStickyDescendant(el)) return false;
-    el.classList.add("ufo-auto");
-    return true;
+    // Slow path: wait until head/body exists
+    let done = false;
+    const tryAppend = () => {
+      if (done) return;
+      if (document.head || document.body) {
+        done = true;
+        appendNow();
+        try { mo.disconnect(); } catch {}
+        try { document.removeEventListener("readystatechange", onRS); } catch {}
+        try { document.removeEventListener("DOMContentLoaded", onReady); } catch {}
+      }
+    };
+    const mo = new MutationObserver(tryAppend);
+    try { mo.observe(document.documentElement || document, { childList: true, subtree: true }); } catch {}
+    const onReady = () => tryAppend();
+    const onRS = () => { if (document.readyState !== "loading") tryAppend(); };
+    document.addEventListener("readystatechange", onRS);
+    document.addEventListener("DOMContentLoaded", onReady, { once: true });
+
+    return { node: null };
   };
 
-  // Auto-mark common large regions if author opted in via attribute
-  // Example usage in HTML: <main data-ufo="auto">...</main>
-  function bootstrapAutoMarks() {
-    document.querySelectorAll('[data-ufo="auto"]').forEach((el) => {
-      window.__ufo_markAuto(el);
-    });
-  }
+  // ⬇️ your CSS goes here (example shown—keep your actual rules)
+  const CSS = `
+  .ufo-auto{ content-visibility:auto; contain:content; }
+  /* add any other rules you had */
+  `.trim();
 
-  if (document.readyState !== "loading") bootstrapAutoMarks();
-  else document.addEventListener("DOMContentLoaded", bootstrapAutoMarks, { once: true });
+  // Inject safely (won’t crash if head isn’t ready yet)
+  injectStyle(CSS, "ufo-offscreen-style");
+
+  // …the rest of your module logic…
 })();

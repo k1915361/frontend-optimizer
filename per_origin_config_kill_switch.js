@@ -16,20 +16,44 @@
   // Lightweight flags (e.g., REALTIME) live here if you need non-FEAT toggles.
   UFO.flags ??= {};
 
-  
+
+  // Shared, CSP-safe, DOM-early tolerant style injector
   (UFO.util ??= {});
-  UFO.util.injectStyle ||= function injectStyle(cssText, id) {
-    const el = document.createElement("style");
-    if (id) el.id = id;
-    el.textContent = cssText;
-    document.head.appendChild(el);
-    (UFO.__cleanups ??= []).push(() => el.remove());
-    return { node: el };
+  UFO.util.injectStyle = function injectStyle(cssText, id) {
+    function append() {
+      const head = document.head || document.getElementsByTagName("head")[0] || document.body || document.documentElement;
+      const el = document.createElement("style");
+      if (id) el.id = id;
+      el.textContent = cssText;
+      head.appendChild(el);
+      (UFO.__cleanups ??= []).push(() => { try { el.remove(); } catch {} });
+      return { node: el };
+    }
+
+    // Fast path if head/body already exist
+    if (document.head || document.body) {
+      return append();
+    }
+
+    // Slow path: wait until head (or body) appears
+    let done = false;
+    const tryAppend = () => { if (!done && (document.head || document.body)) { done = true; append(); mo && mo.disconnect(); } };
+    const mo = new MutationObserver(tryAppend);
+    try { mo.observe(document.documentElement, { childList: true, subtree: true }); } catch {}
+    // Also a backstop using readystatechange / DOMContentLoaded
+    const onReady = () => { tryAppend(); cleanup(); };
+    const cleanup = () => {
+      try { document.removeEventListener("readystatechange", onRS); } catch {}
+      try { document.removeEventListener("DOMContentLoaded", onReady); } catch {}
+    };
+    function onRS() { if (document.readyState !== "loading") onReady(); }
+    document.addEventListener("readystatechange", onRS);
+    document.addEventListener("DOMContentLoaded", onReady, { once: true });
+
+    // Return a placeholder now; the actual node is created later
+    return { node: null };
   };
-
-  // Optional adapter so older modules calling addStyle still work:
-  UFO.util.addStyle = (css, id) => (UFO.util.injectStyle(css, id).node);
-
+  
   // --- Helpers ---------------------------------------------------------------
   function safeParse(json) {
     try { return JSON.parse(json); } catch { return null; }

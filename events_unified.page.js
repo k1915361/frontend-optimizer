@@ -131,7 +131,7 @@ __ufo_profileUpdate?.({ LISTENER_CLEANUP: false })       // skip detach observer
   });
 
   // Clean up listeners when nodes are removed
-  const schedule = (fn) => {
+  const schedule= (fn) => {
     try {
       // Prefer batched flush (if content script bridged it), else run now.
       (window.__ufo_batch || ((f) => f()))(fn);
